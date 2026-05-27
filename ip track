@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+
+import json
+import sys
+import socket
+import os
+import platform
+import urllib.request
+import urllib.error
+import ipaddress
+
+BANNER = """
+  ___ ____    _____ ____            _             
+ |_ _|  _ \  |_   _|  _ \ __ _  ___| | _____ _ __ 
+  | || |_) |   | | | |_) / _` |/ __| |/ / _ \ '__|
+  | ||  __/    | | |  _ < (_| | (__|   <  __/ |   
+ |___|_|       |_| |_| \_\__,_|\___|_|\_\___|_|   
+"""
+
+GRN = "\033[1;32m"
+RED = "\033[1;31m"
+YLW = "\033[1;33m"
+CYN = "\033[1;36m"
+RST = "\033[0m"
+
+def get_ip_info(ip):
+    url = f"http://ip-api.com/json/{ip}?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,query"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=10) as res:
+            return json.loads(res.read().decode())
+    except:
+        return None
+
+def get_public_ip():
+    for svc in ["https://api.ipify.org", "https://icanhazip.com", "https://checkip.amazonaws.com"]:
+        try:
+            with urllib.request.urlopen(svc, timeout=5) as res:
+                return res.read().decode().strip()
+        except:
+            continue
+    return None
+
+def validate_ip(ip):
+    try:
+        ipaddress.ip_address(ip)
+        return True
+    except ValueError:
+        return False
+
+def print_res(data):
+    if not data or data.get("status") == "fail":
+        print(f"{RED}{data.get('message','No data')}{RST}")
+        return
+    print(f"\n{GRN}{'='*60}{RST}")
+    print(f"{CYN}IP: {data.get('query','N/A')}{RST}")
+    print(f"{YLW}Country:   {data.get('country','N/A')} ({data.get('countryCode','N/A')}){RST}")
+    print(f"{YLW}Region:    {data.get('regionName','N/A')} ({data.get('region','N/A')}){RST}")
+    print(f"{YLW}City:      {data.get('city','N/A')}{RST}")
+    print(f"{YLW}ZIP:       {data.get('zip','N/A')}{RST}")
+    print(f"{YLW}Lat:       {data.get('lat','N/A')}{RST}")
+    print(f"{YLW}Lon:       {data.get('lon','N/A')}{RST}")
+    print(f"{YLW}Timezone:  {data.get('timezone','N/A')}{RST}")
+    print(f"{YLW}ISP:       {data.get('isp','N/A')}{RST}")
+    print(f"{YLW}Org:       {data.get('org','N/A')}{RST}")
+    print(f"{YLW}AS:        {data.get('as','N/A')}{RST}")
+    if data.get("lat") and data.get("lon"):
+        print(f"\n{GRN}Google Maps: https://www.google.com/maps?q={data['lat']},{data['lon']}{RST}")
+    print(f"{GRN}{'='*60}{RST}\n")
+
+def port_scan(ip):
+    print(f"\n{CYN}[*] Scanning common ports on {ip}...{RST}")
+    common_ports = [21,22,23,25,53,80,110,143,443,445,993,995,1433,1521,2049,3306,3389,5432,5900,6379,8080,8443,9000,9200,27017]
+    open_ports = []
+    for port in common_ports:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1.5)
+        try:
+            result = sock.connect_ex((ip, port))
+            if result == 0:
+                open_ports.append(port)
+                try:
+                    sock.send(b"HEAD / HTTP/1.0\r\n\r\n")
+                    banner = sock.recv(1024).decode().strip()[:80]
+                    if banner:
+                        print(f"{GRN}[OPEN]  {port} -> {banner}{RST}")
+                    else:
+                        print(f"{GRN}[OPEN]  {port}{RST}")
+                except:
+                    print(f"{GRN}[OPEN]  {port}{RST}")
+        except:
+            pass
+        finally:
+            sock.close()
+    if not open_ports:
+        print(f"{YLW}[*] No common ports open{RST}")
+    return open_ports
+
+def whois_lookup(ip):
+    print(f"\n{CYN}[*] WHOIS lookup for {ip}...{RST}")
+    try:
+        with urllib.request.urlopen(f"http://ip-api.com/json/{ip}?fields=as,isp,org", timeout=10) as res:
+            d = json.loads(res.read().decode())
+            if d.get("isp"):
+                print(f"{GRN}ISP:  {d['isp']}{RST}")
+            if d.get("org"):
+                print(f"{GRN}Org:  {d['org']}{RST}")
+            if d.get("as"):
+                print(f"{GRN}AS:   {d['as']}{RST}")
+    except:
+        print(f"{RED}WHOIS lookup failed{RST}")
+
+def reverse_dns(ip):
+    print(f"\n{CYN}[*] Reverse DNS lookup for {ip}...{RST}")
+    try:
+        host = socket.gethostbyaddr(ip)
+        print(f"{GRN}Hostname: {host[0]}{RST}")
+    except:
+        print(f"{YLW}No reverse DNS record found{RST}")
+
+def save_results(data, ip, open_ports):
+    filename = f"ip_tracker_{ip.replace('.','_')}.txt"
+    with open(filename, "w") as f:
+        f.write(f"IP Tracker Report - {ip}\n")
+        f.write(f"{'='*50}\n")
+        if data:
+            for k,v in data.items():
+                f.write(f"{k}: {v}\n")
+        if open_ports:
+            f.write(f"\nOpen Ports:\n")
+            for p in open_ports:
+                f.write(f"  {p}\n")
+    print(f"{GRN}[+] Results saved to {filename}{RST}")
+
+def main():
+    os.system("cls" if os.name == "nt" else "clear")
+    print(BANNER)
+    target = input(f"{CYN}IP: {RST}").strip()
+    if target and not validate_ip(target):
+        print(f"{RED}Invalid IP{RST}")
+        sys.exit(1)
+    if not target:
+        print(f"{YLW}[*] Getting your public IP...{RST}")
+        target = get_public_ip()
+        if not target:
+            print(f"{RED}Could not detect public IP{RST}")
+            sys.exit(1)
+        print(f"{GRN}Your IP: {target}{RST}")
+    data = get_ip_info(target)
+    print_res(data)
+    reverse_dns(target)
+    whois_lookup(target)
+    ports = port_scan(target)
+    save = input(f"\n{CYN}Save to file? (y/n): {RST}").strip().lower()
+    if save == "y":
+        save_results(data, target, ports)
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print(f"\n{RED}Cancelled{RST}")
+        sys.exit(0)
